@@ -359,6 +359,12 @@ function tick(dt) {
 function setup() {
     canvas.width = 256;
     canvas.height = 256;
+    client.resize({
+      // optional height in pixels
+      height: 256,
+      // optional width in pixels
+      width: 256,
+    });
     player = {
         map_pos: {x: 0, y: 0}, // note that 0,0 is the middle of a map and a room
         room_pos: {x: 0, y: 0},
