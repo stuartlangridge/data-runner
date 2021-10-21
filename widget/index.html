@@ -1,0 +1,475 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>The Data Runner</title>
+<style>
+@font-face {
+  font-family: 'zxSpectrumStrictCondensed';
+  src:  url('imagery/zxSpectrumStrictCondensed.woff2') format('woff2');
+}
+@keyframes spinner {
+  to {transform: rotate(360deg);}
+}
+body {
+    margin: 0;
+    padding: 0;
+    display: grid;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+}
+body.loading:before {
+  content: '';
+  box-sizing: border-box;
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 20px;
+  height: 20px;
+  margin-top: -10px;
+  margin-left: -10px;
+  border-radius: 50%;
+  border-top: 2px solid #07d;
+  border-right: 2px solid transparent;
+  animation: spinner .6s linear infinite;
+}
+</style>
+</head>
+<body class="loading">
+<div id="credits" style="display: none">
+    font: https://github.com/OOQQ/ZX-Spectrum-font
+    images: kenney.nl
+</div>
+<canvas></canvas>
+<script src="../ui-extensions-sdk.min.js"></script>
+<script>
+/* jshint esversion: 11 */
+const client = window.DD_SDK.init();
+
+const handleChange = obj => {
+    console.log("change", obj);
+}
+
+client.getContext().then((c) => {
+    handleChange(c.widget?.definition?.options);
+});
+
+client.events.on(window.DD_SDK.EventType.DASHBOARD_CUSTOM_WIDGET_OPTIONS_CHANGE, (inputData) => {
+    handleChange(inputData);
+});
+
+</script>
+<script src="break_infinity.min.js"></script>
+<script>
+/*jshint esversion:10 */
+const FLOORS = ["dirt", "stoneMissingTiles", "stone"];
+const FLOORS_CENTRAL = ["dirt", "stone"];
+const TAT = [
+    "libraryChair", "displayCaseSword", "displayCaseBooks", "candleStand",
+    "chestClosed", "longTableLarge", "planksBroken", "woodenCrates",
+    "woodenPile", "tableChairsBroken", "tableRoundChairs", "tableShort",
+    "floorCarpet", "barrel", "barrels"
+];
+const canvas = document.querySelector("canvas");
+const ctx = canvas.getContext("2d");
+let player;
+let map = {};
+let IMAGE_CACHE = {};
+const FPS_TARGET = 15;
+const TIME_PER_FRAME = 1000 / FPS_TARGET;
+let LAST_DT = 0;
+function choose(array) {
+    return array[Math.floor(Math.random() * array.length)];
+}
+function ensureRoomExists(x, y) {
+    if (!map[[x, y]]) {
+        map[[x, y]] = {
+            // start on north wall, direction 0, which is at 12 o'clock, top of the diamond
+            // nine spaces for each room. Each is a list; bottom first, so draw in order
+            //         -1,-1
+            //       -1,0   0,-1
+            //  -1,1    0,0    1,-1
+            //       0,1    1,0
+            //          1,1
+            tiles: [
+                [`${choose(FLOORS)}_N`, `${choose(TAT)}_${choose(["N","S","E","W"])}`], // -1,-1
+                [`${choose(FLOORS)}_N`], // -1,0
+                [`${choose(FLOORS)}_N`], // 0,-1
+                [`${choose(FLOORS)}_N`, `${choose(TAT)}_${choose(["N","S","E","W"])}`], // -1,1
+                [`${choose(FLOORS_CENTRAL)}_N`], // 0,0
+                [`${choose(FLOORS)}_N`, `${choose(TAT)}_${choose(["N","S","E","W"])}`], // 1,-1
+                [`${choose(FLOORS)}_N`], // 0,1
+                [`${choose(FLOORS)}_N`], // 1,0
+                [`${choose(FLOORS)}_N`, `${choose(TAT)}_${choose(["N","S","E","W"])}`] // 1,1
+            ]
+        };
+    }
+}
+function ensureMapExists() {
+    // the map needs to exist in all eight directions from the room the player is in
+    ensureRoomExists(player.map_pos.x, player.map_pos.y);
+    ensureRoomExists(player.map_pos.x - 1, player.map_pos.y);
+    ensureRoomExists(player.map_pos.x + 1, player.map_pos.y);
+    ensureRoomExists(player.map_pos.x, player.map_pos.y - 1);
+    ensureRoomExists(player.map_pos.x, player.map_pos.y + 1);
+    ensureRoomExists(player.map_pos.x - 1, player.map_pos.y - 1);
+    ensureRoomExists(player.map_pos.x - 1, player.map_pos.y + 1);
+    ensureRoomExists(player.map_pos.x + 1, player.map_pos.y - 1);
+    ensureRoomExists(player.map_pos.x + 1, player.map_pos.y + 1);
+}
+function cacheThen(image_filename, next_function) {
+    // the man images are stashed as one big image with offsets
+    // they're pre-stored in the cache
+    // we return the offsets into the big image
+    // but other stuff is just stored with offsets 0
+    // and everyone except drawPlayer ignores returned offsets because
+    // they're always zero
+    let res = IMAGE_CACHE[image_filename];
+    if (res) {
+        next_function(res[0], res[1], res[2]);
+    } else {
+        let i = new Image();
+        IMAGE_CACHE[image_filename] = [i, 0, 0];
+        i.onload = () => {
+            next_function(i, 0, 0);
+        };
+        i.onerror = () => {
+            console.error("Image didn't load", image_filename);
+        };
+        i.src = image_filename;
+    }
+}
+function drawRoom(room, xoff, yoff) {
+    room.tiles.forEach((tlist, idx) => {
+        //         -1,-1
+        //       -1,0   0,-1
+        //  -1,-1   0,0    1,-1
+        //       0,1    1,0
+        //          1,1
+        let in_room_offsets = [
+            {x: 0, y: -128}, // -1,-1
+            {x: -128, y: -64},    // -1,0
+            {x: 128, y: -64},    // 0,-1
+            {x: -256, y: 0},    // -1,-1
+            {x: 0, y: 0},    // 0,0
+            {x: 256, y: 0},    // 1,-1
+            {x: -128, y: 64},    // 0,1
+            {x: 128, y: 64},    // 1,0
+            {x: 0, y: 128},    // 1,1
+        ][idx];
+        tlist.forEach(image_basename => {
+            const image = `imagery/library-world/${image_basename}.png`;
+            //if (idx != 4 && idx != 5 && idx != 0) return;
+            // console.log("request", image);
+            cacheThen(image, (sprite, sx, sy) => {
+                // console.log("draw", sprite, "at", in_room_offsets)
+                ctx.drawImage(sprite, sx, sy, 256, 512, 0 + xoff + in_room_offsets.x, 0 + yoff + in_room_offsets.y, 256, 512);
+            });
+        });
+    });
+}
+function drawMap() {
+    drawRoom(map[[player.map_pos.x - 1, player.map_pos.y - 1]],
+             0 + player.room_pos.x, -384 + player.room_pos.y);
+    drawRoom(map[[player.map_pos.x, player.map_pos.y - 1]],
+             384 + player.room_pos.x, -192 + player.room_pos.y);
+    drawRoom(map[[player.map_pos.x - 1, player.map_pos.y]],
+             -384 + player.room_pos.x, -192 + player.room_pos.y);
+    drawRoom(map[[player.map_pos.x, player.map_pos.y]],
+             0 + player.room_pos.x, 0 + player.room_pos.y);
+    drawRoom(map[[player.map_pos.x - 1, player.map_pos.y + 1]],
+             -800 + player.room_pos.x, player.room_pos.y);
+    drawRoom(map[[player.map_pos.x, player.map_pos.y + 1]],
+             -384 + player.room_pos.x, 192 + player.room_pos.y);
+    drawRoom(map[[player.map_pos.x + 1, player.map_pos.y]],
+             384 + player.room_pos.x, 192 + player.room_pos.y);
+    drawRoom(map[[player.map_pos.x + 1, player.map_pos.y + 1]],
+             384 + player.room_pos.x, 384 + player.room_pos.y);
+}
+function wordWrapToStringList (text, maxLength) {
+    var result = [], line = [];
+    var length = 0;
+    text.split(" ").forEach(function(word) {
+        if ((length + word.length) >= maxLength) {
+            result.push(line.join(" "));
+            line = []; length = 0;
+        }
+        length += word.length + 1;
+        line.push(word);
+    });
+    if (line.length > 0) {
+        result.push(line.join(" "));
+    }
+    return result;
+};
+function drawPlayer() {
+    // player is always at the same position in the canvas, and the world moves
+    let realaction = player.action;
+    let realdirection = player.direction;
+    if (player.action == "Speak") {
+        realaction = "Idle";
+    }
+    let image = `imagery/Male/Male_${realdirection}_${realaction}${player.frame}.png`;
+    cacheThen(image, (sprite, sx, sy) => {
+        ctx.drawImage(sprite, sx, sy, 256, 512, 0, 0, 256, 512);
+    });
+    if (player.action == "Run") {
+        player.frame += 1;
+        if (player.frame > 9) { player.frame = 0; }
+    } else if (player.action == "Pickup") {
+        player.frame += 1;
+        if (player.frame > 9) { player.frame = 0; }
+    } else if (player.action == "Speak") {
+        let bubble = `imagery/bubble.png`;
+        cacheThen(bubble, sprite => {
+            ctx.drawImage(sprite, 0, 0);
+            ctx.save();
+            ctx.fillStyle = "white";
+            ctx.font = "24px zxSpectrumStrictCondensed";
+            ctx.transform(1, -0.5, 0, 1, 0, 0);
+            wordWrapToStringList(player.speech, 12).forEach((line, idx) => {
+                ctx.fillText(line, 170, 395 + (idx * 11));
+            })
+            ctx.restore();
+        });
+    }
+}
+function updatePlayer() {
+    if (player.action == "Run") {
+        if (player.room_pos.x == 0 && player.room_pos.y == 0) {
+            if (player.somethingToFind) {
+                player.action = "Pickup";
+                player.frame = 0;
+                player.somethingToFind = false;
+            } else {
+                // maybe change running direction
+                const dirChange = choose([-2, 0, 2]);
+                player.direction = (player.direction + dirChange) % 8;
+                if (player.direction < 0) player.direction += 8;
+            }
+        }
+        const STEPSIZE = 8;
+        switch (player.direction) {
+            case 0:  player.room_pos.x -= STEPSIZE * 2;
+                     player.room_pos.y += STEPSIZE;
+                     if (player.room_pos.x == -192) {
+                        player.room_pos.x = -player.room_pos.x;
+                        player.room_pos.y = -player.room_pos.y;
+                        player.map_pos.y -= 1;
+                     }
+                     break;
+            case 4:  player.room_pos.x += STEPSIZE * 2;
+                     player.room_pos.y -= STEPSIZE;
+                     if (player.room_pos.x == 192) {
+                        player.room_pos.x = -player.room_pos.x;
+                        player.room_pos.y = -player.room_pos.y;
+                        player.map_pos.y += 1;
+                     }
+                     break;
+            case 2:  player.room_pos.x -= STEPSIZE * 2;
+                     player.room_pos.y -= STEPSIZE;
+                     if (player.room_pos.x == -192) {
+                        player.room_pos.x = -player.room_pos.x;
+                        player.room_pos.y = -player.room_pos.y;
+                        player.map_pos.x += 1;
+                     }
+                     break;
+            case 6:  player.room_pos.x += STEPSIZE * 2;
+                     player.room_pos.y += STEPSIZE;
+                     if (player.room_pos.x == 192) {
+                        player.room_pos.x = -player.room_pos.x;
+                        player.room_pos.y = -player.room_pos.y;
+                        player.map_pos.x -= 1;
+                     }
+                     break;
+        }
+    } else if (player.action == "Pickup") {
+        if (player.frame == 0) {
+            player.action = "Speak";
+            player.speakTimer = 0;
+            player.score = player.score.add(player.prize);
+        }
+    } else if (player.action == "Speak") {
+        player.speakTimer += 1;
+        if (player.speakTimer == FPS_TARGET * 2) {
+            player.action = "Run";
+        }
+    }
+}
+function drawScore() {
+    ctx.font = "60px zxSpectrumStrictCondensed";
+    ctx.fillStyle = "black";
+    const txt = `SCORE: ${player.score < 9999999 ? player.score : player.score.toExponential(2)}`;
+    const x = 4, y = 500;
+    ctx.fillText(txt, x - 2, y - 2);
+    ctx.fillText(txt, x + 2, y + 2);
+    ctx.fillText(txt, x + 2, y - 2);
+    ctx.fillText(txt, x - 2, y + 2);
+    ctx.fillStyle = "white";
+    ctx.fillText(txt, x, y);
+}
+function tick(dt) {
+    const elapsed = dt - LAST_DT;
+    if (elapsed > TIME_PER_FRAME) {
+        LAST_DT = dt;
+        updatePlayer();
+        ensureMapExists();
+        canvas.width = canvas.width;
+        ctx.translate(0, -256); // to draw the bottom half at the top
+        drawMap();
+        drawPlayer();
+        drawScore();
+    }
+    requestAnimationFrame(tick);
+}
+function setup() {
+    canvas.width = 256;
+    canvas.height = 256;
+    player = {
+        map_pos: {x: 0, y: 0}, // note that 0,0 is the middle of a map and a room
+        room_pos: {x: 0, y: 0},
+        direction: 4,
+        action: "Run",
+        speech: "",
+        frame: 0,
+        score: new Decimal(0),
+        somethingToFind: false
+    };
+}
+const library_imagenames = ['imagery/library-world/barrel_E.png',
+'imagery/library-world/barrel_N.png', 'imagery/library-world/barrel_S.png',
+'imagery/library-world/barrel_W.png', 'imagery/library-world/barrels_E.png',
+'imagery/library-world/barrels_N.png', 'imagery/library-world/barrels_S.png',
+'imagery/library-world/barrels_W.png',
+'imagery/library-world/candleStand_E.png',
+'imagery/library-world/candleStand_N.png',
+'imagery/library-world/candleStand_S.png',
+'imagery/library-world/candleStand_W.png',
+'imagery/library-world/chestClosed_E.png',
+'imagery/library-world/chestClosed_N.png',
+'imagery/library-world/chestClosed_S.png',
+'imagery/library-world/chestClosed_W.png', 'imagery/library-world/dirt_E.png',
+'imagery/library-world/dirt_E.png', 'imagery/library-world/dirt_N.png',
+'imagery/library-world/dirt_N.png', 'imagery/library-world/dirt_S.png',
+'imagery/library-world/dirt_S.png', 'imagery/library-world/dirt_W.png',
+'imagery/library-world/dirt_W.png',
+'imagery/library-world/displayCaseBooks_E.png',
+'imagery/library-world/displayCaseBooks_N.png',
+'imagery/library-world/displayCaseBooks_S.png',
+'imagery/library-world/displayCaseBooks_W.png',
+'imagery/library-world/displayCaseSword_E.png',
+'imagery/library-world/displayCaseSword_N.png',
+'imagery/library-world/displayCaseSword_S.png',
+'imagery/library-world/displayCaseSword_W.png',
+'imagery/library-world/floorCarpet_E.png',
+'imagery/library-world/floorCarpet_N.png',
+'imagery/library-world/floorCarpet_S.png',
+'imagery/library-world/floorCarpet_W.png',
+'imagery/library-world/libraryChair_E.png',
+'imagery/library-world/libraryChair_N.png',
+'imagery/library-world/libraryChair_S.png',
+'imagery/library-world/libraryChair_W.png',
+'imagery/library-world/longTableLarge_E.png',
+'imagery/library-world/longTableLarge_N.png',
+'imagery/library-world/longTableLarge_S.png',
+'imagery/library-world/longTableLarge_W.png',
+'imagery/library-world/planksBroken_E.png',
+'imagery/library-world/planksBroken_N.png',
+'imagery/library-world/planksBroken_S.png',
+'imagery/library-world/planksBroken_W.png',
+'imagery/library-world/stoneMissingTiles_E.png',
+'imagery/library-world/stoneMissingTiles_N.png',
+'imagery/library-world/stoneMissingTiles_S.png',
+'imagery/library-world/stoneMissingTiles_W.png',
+'imagery/library-world/stone_E.png', 'imagery/library-world/stone_E.png',
+'imagery/library-world/stone_N.png', 'imagery/library-world/stone_N.png',
+'imagery/library-world/stone_S.png', 'imagery/library-world/stone_S.png',
+'imagery/library-world/stone_W.png', 'imagery/library-world/stone_W.png',
+'imagery/library-world/tableChairsBroken_E.png',
+'imagery/library-world/tableChairsBroken_N.png',
+'imagery/library-world/tableChairsBroken_S.png',
+'imagery/library-world/tableChairsBroken_W.png',
+'imagery/library-world/tableRoundChairs_E.png',
+'imagery/library-world/tableRoundChairs_N.png',
+'imagery/library-world/tableRoundChairs_S.png',
+'imagery/library-world/tableRoundChairs_W.png',
+'imagery/library-world/tableShort_E.png',
+'imagery/library-world/tableShort_N.png',
+'imagery/library-world/tableShort_S.png',
+'imagery/library-world/tableShort_W.png',
+'imagery/library-world/woodenCrates_E.png',
+'imagery/library-world/woodenCrates_N.png',
+'imagery/library-world/woodenCrates_S.png',
+'imagery/library-world/woodenCrates_W.png',
+'imagery/library-world/woodenPile_E.png',
+'imagery/library-world/woodenPile_N.png',
+'imagery/library-world/woodenPile_S.png',
+'imagery/library-world/woodenPile_W.png'];
+
+function preCacheImages() {
+    let imglist = [];
+    let x = 0;
+    let y = 0;
+    cacheThen("imagery/male.webp", () => {
+        for (let d=0; d<8; d++) {
+            [["Idle", 1], ["Pickup", 10], ["Run", 10]].forEach(([a, mx]) => {
+                for (let f=0; f<mx; f++) {
+                    IMAGE_CACHE[`imagery/Male/Male_${d}_${a}${f}.png`] = [
+                        IMAGE_CACHE["imagery/male.webp"][0], x, y];
+                    x += 256;
+                    if (x > 4096 - 256) {
+                        x = 0;
+                        y += 512;
+                    }
+                }
+            });
+        }
+        cacheThen("imagery/library.webp", () => {
+            x = 0; y = 0;
+            library_imagenames.forEach(li => {
+                IMAGE_CACHE[li] = [
+                    IMAGE_CACHE["imagery/library.webp"][0], x, y];
+                x += 256;
+                if (x > 2048 - 256) {
+                    x = 0;
+                    y += 512;
+                }
+            })
+            document.body.classList.remove("loading");
+            tick();
+        });
+    });
+}
+
+function preCacheImagesSlow() {
+    let imglist = [];
+    for (let d=0; d<8; d++) {
+        [["Run", 10], ["Idle", 1], ["Pickup", 10]].forEach(([a, mx]) => {
+            for (let f=0; f<mx; f++) {
+                imglist.push(`imagery/Male/Male_${d}_${a}${f}.png`);
+            }
+        });
+    }
+    function doNext() {
+        let nxt = imglist.shift();
+        if (!nxt) {
+            document.body.classList.remove("loading");
+            tick();
+            return;
+        }
+        cacheThen(nxt, doNext);
+    }
+    doNext();
+}
+
+setup();
+preCacheImages();
+setInterval(() => {
+    player.prize = Math.floor(Math.random() * 100000);
+    player.speech = `Wow! I found ${Math.floor(Math.random() * 100)} pies right here!`;
+    player.somethingToFind = true;
+}, 5000);
+</script>
+</body>
+</html>
