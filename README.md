@@ -27,3 +27,5 @@ On startup, it uses the [widget API client](https://github.com/DataDog/apps/blob
 When you choose a metric (either on first adding the widget to your dashboard, or at any time later with the edit button), the Datadog dashboard fires a [`dashboard_custom_widget_options_change`](https://github.com/DataDog/apps/blob/master/docs/en/programming-model.md#widget-settings-menu) custom event which the runner code listens for and records the metric name.
 
 Then periodically the runner polls the [metrics query API](https://docs.datadoghq.com/api/latest/metrics/#query-timeseries-points) for that chosen metric and takes the highest value since the last time it asked, and adds that to the runner's score.
+
+The imagery is all from the fantastic [Kenney](https://kenney.nl/assets/isometric-library-tiles), and the font is from [ooqq](https://github.com/OOQQ/ZX-Spectrum-font).
