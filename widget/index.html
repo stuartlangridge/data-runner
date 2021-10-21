@@ -46,9 +46,12 @@ body.loading:before {
 <script>
 /* jshint esversion: 11 */
 const client = window.DD_SDK.init();
+let METRIC_TO_MONITOR;
 
 const handleChange = obj => {
-    console.log("change", obj);
+    console.log("change metric to", obj);
+    METRIC_TO_MONITOR = obj?.metric;
+    setTimeout(pollMetric, 100);
 }
 
 client.getContext().then((c) => {
@@ -76,7 +79,7 @@ const ctx = canvas.getContext("2d");
 let player;
 let map = {};
 let IMAGE_CACHE = {};
-const FPS_TARGET = 15;
+const FPS_TARGET = 20;
 const TIME_PER_FRAME = 1000 / FPS_TARGET;
 let LAST_DT = 0;
 function choose(array) {
@@ -298,16 +301,38 @@ function updatePlayer() {
     }
 }
 function drawScore() {
+    function doFill(txt, x, y) {
+        ctx.fillStyle = "black";
+        ctx.fillText(txt, x - 2, y - 2);
+        ctx.fillText(txt, x + 2, y + 2);
+        ctx.fillText(txt, x + 2, y - 2);
+        ctx.fillText(txt, x - 2, y + 2);
+        ctx.fillStyle = "white";
+        ctx.fillText(txt, x, y);
+    }
     ctx.font = "60px zxSpectrumStrictCondensed";
-    ctx.fillStyle = "black";
-    const txt = `SCORE: ${player.score < 9999999 ? player.score : player.score.toExponential(2)}`;
+    let scoretext, hightext;
+    if (player.score < 9999999) {
+        scoretext = player.score;
+    } else {
+        let res = player.score.toExponential(1);
+        let mantissa = res.substr(0, 3);
+        let exp = res.substr(5);
+        scoretext = `${mantissa}x10`;
+        hightext = exp;
+    }
+    const txt = `SCORE: ${scoretext}`;
     const x = 4, y = 500;
-    ctx.fillText(txt, x - 2, y - 2);
-    ctx.fillText(txt, x + 2, y + 2);
-    ctx.fillText(txt, x + 2, y - 2);
-    ctx.fillText(txt, x - 2, y + 2);
-    ctx.fillStyle = "white";
-    ctx.fillText(txt, x, y);
+    doFill(txt, x, y);
+    if (hightext) { doFill(hightext, x+190, y-25); }
+
+    if (METRIC_TO_MONITOR) {
+        ctx.font = "20px zxSpectrumStrictCondensed";
+        ctx.fillStyle = "black";
+        ctx.fillRect(0, 256, 256, 16);
+        ctx.fillStyle = "white";
+        ctx.fillText("Searching for " + METRIC_TO_MONITOR, 2, 268);
+    }
 }
 function tick(dt) {
     const elapsed = dt - LAST_DT;
@@ -442,6 +467,61 @@ function preCacheImages() {
     });
 }
 
+function fetchMetricsList() {
+    client.api.get('/api/v1/metrics', {
+        params: {
+            from: Math.floor(Date.now() / 1000) - 5
+        }
+    })
+    .then(data => {
+        /* Add the metrics to the menu so they can be switched between */
+        let metrics = data?.metrics || [];
+        if (!metrics || metrics.length == 0) {
+            console.error("Unexpectedly found no metrics to monitor");
+            return;
+        }
+        metrics.sort();
+        client.dashboard.customWidget.updateOptions([
+            {
+                type: "string",
+                name: 'metric',
+                label: "Metric to power the Data Runner's quest",
+                enum: metrics,
+                // enforce a specific order to display the field in the widget editor
+                order: 1,
+            },
+        ]);
+        /* And choose a metric to monitor; system.cpu.user if present, otherwise the first */
+    })
+    .catch(e => {
+        console.error("Unexpected error reading metric names", e);
+    });
+}
+
+function pollMetric() {
+    if (!METRIC_TO_MONITOR) return;
+    client.api.get('/api/v1/query', {
+        params: {
+            from: Math.floor(Date.now() / 1000) - POLL_MS,
+            to: Math.floor(Date.now() / 1000),
+            query: METRIC_TO_MONITOR + "{*}"
+        }
+    })
+    .then(data => {
+        console.log("got data", data);
+        if (data?.series && data?.series.length > 0) {
+            let highest = Math.max.apply(Math, data.series[0].pointlist.map(x => x[1]));
+            highest = highest
+            player.prize = highest;
+            player.speech = `Sweet, here's ${highest.toPrecision(5)} of them!`;
+            player.somethingToFind = true;
+        }
+    })
+    .catch(e => {
+        console.error("error", e);
+    });
+}
+
 function preCacheImagesSlow() {
     let imglist = [];
     for (let d=0; d<8; d++) {
@@ -465,11 +545,9 @@ function preCacheImagesSlow() {
 
 setup();
 preCacheImages();
-setInterval(() => {
-    player.prize = Math.floor(Math.random() * 100000);
-    player.speech = `Wow! I found ${Math.floor(Math.random() * 100)} pies right here!`;
-    player.somethingToFind = true;
-}, 5000);
+fetchMetricsList();
+const POLL_MS = 10000;
+setInterval(pollMetric, POLL_MS);
 </script>
 </body>
 </html>
