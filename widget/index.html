@@ -51,8 +51,10 @@ let METRIC_TO_MONITOR;
 const handleChange = obj => {
     console.log("change metric to", obj);
     METRIC_TO_MONITOR = obj?.metric;
-    setTimeout(pollMetric, 100);
-}
+    player.speech = "OK, I'll start looking right away!";
+    player.somethingToFind = true;
+    player.straightToSpeak = true;
+};
 
 client.getContext().then((c) => {
     handleChange(c.widget?.definition?.options);
@@ -241,7 +243,13 @@ function drawPlayer() {
 function updatePlayer() {
     if (player.action == "Run") {
         if (player.room_pos.x == 0 && player.room_pos.y == 0) {
-            if (player.somethingToFind) {
+            if (player.somethingToFind && player.straightToSpeak) {
+                player.action = "Speak";
+                player.speakTimer = 0;
+                player.frame = 0;
+                player.somethingToFind = false;
+                player.straightToSpeak = false;
+            } else if (player.somethingToFind) {
                 player.action = "Pickup";
                 player.frame = 0;
                 player.somethingToFind = false;
@@ -295,7 +303,7 @@ function updatePlayer() {
         }
     } else if (player.action == "Speak") {
         player.speakTimer += 1;
-        if (player.speakTimer == FPS_TARGET * 2) {
+        if (player.speakTimer == FPS_TARGET * 1.5) {
             player.action = "Run";
         }
     }
@@ -511,9 +519,9 @@ function pollMetric() {
         console.log("got data", data);
         if (data?.series && data?.series.length > 0) {
             let highest = Math.max.apply(Math, data.series[0].pointlist.map(x => x[1]));
-            highest = highest
+            highest = highest;
             player.prize = highest;
-            player.speech = `Sweet, here's ${highest.toPrecision(5)} of them!`;
+            player.speech = `${choose(['Look', 'Sweet', 'Great', 'Hooray', 'Cool'])}, ${choose(["here's", "I've found", "here are"])} ${highest.toPrecision(5)} of them!`;
             player.somethingToFind = true;
         }
     })
