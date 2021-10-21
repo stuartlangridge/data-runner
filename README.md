@@ -4,7 +4,7 @@
 
 The data runner is trapped in an infinite library, searching for your metrics. Open up a portal to watch him and see if you can get a better score than your peers! An idle game for the Datadog dashboard.
 
-https://raw.githubusercontent.com/stuartlangridge/data-runner/main/screenshot.mp4
+https://user-images.githubusercontent.com/4356350/138356326-d378a97a-6e24-4cf8-b1c9-3fa9cb5c4ea4.mp4
 
 ## What it does
 
