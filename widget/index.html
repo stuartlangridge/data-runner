@@ -36,7 +36,8 @@ body.loading:before {
 }
 </style>
 </head>
-<body class="loading">
+<body class="loading"
+    title="An avatar on a mission to search, and collect every instance of a metric it can find!">
 <div id="credits" style="display: none">
     font: https://github.com/OOQQ/ZX-Spectrum-font
     images: kenney.nl
@@ -49,7 +50,6 @@ const client = window.DD_SDK.init();
 let METRIC_TO_MONITOR;
 
 const handleChange = obj => {
-    console.log("change metric to", obj);
     METRIC_TO_MONITOR = obj?.metric;
     player.speech = "OK, I'll start looking right away!";
     player.somethingToFind = true;
@@ -166,9 +166,7 @@ function drawRoom(room, xoff, yoff) {
         tlist.forEach(image_basename => {
             const image = `imagery/library-world/${image_basename}.png`;
             //if (idx != 4 && idx != 5 && idx != 0) return;
-            // console.log("request", image);
             cacheThen(image, (sprite, sx, sy) => {
-                // console.log("draw", sprite, "at", in_room_offsets)
                 ctx.drawImage(sprite, sx, sy, 256, 512, 0 + xoff + in_room_offsets.x, 0 + yoff + in_room_offsets.y, 256, 512);
             });
         });
@@ -522,7 +520,6 @@ function pollMetric() {
         }
     })
     .then(data => {
-        console.log("got data", data);
         if (data?.series && data?.series.length > 0) {
             let highest = Math.max.apply(Math, data.series[0].pointlist.map(x => x[1]));
             highest = highest;
